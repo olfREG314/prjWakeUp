@@ -1,12 +1,14 @@
 #include<NTPClient.h>//update time from ntp
 #include<ESP8266WiFi.h>//connect to wifi
 #include<WiFiUdp.h>//receive data from internet
-// #include "thingProperties.h" //connection to Arduino Cloud
+#include<WakeOnLan.h>
 //===wifi 2.4Gh credentials================
 const char* ssid="fbi_open";
 const char* pswd="qwertyxiop";
 //==================================
 WiFiUDP UDP;
+const char *MACAddress="2c:f0:5d:67:04:78";
+WakeOnLan WOL(UDP);
 //5.5*60*60=19800
 const long utcOffsetInSec=19800;
 //provide time
@@ -15,12 +17,16 @@ NTPClient timeClient(UDP,"pool.ntp.org",utcOffsetInSec);
 String week[7]={"SUN","MON","TUE","WED","THU","FRI","SAT"};
 //global var
 int hh,mm,ss,day;
+bool alreadyTriggered=false;
+
 // ===cal Time===========================
 void calCurrentTime(){
-    ss+=1;
-    if(ss==60){
-        mm+=1;
-        ss=0;
+    mm+=1;
+    ss=0;
+    //just to be sure
+    //update time every 5 minute
+    if(mm==5){
+        syncTime();
     }
     if(mm==60){
         hh+=1;
@@ -29,28 +35,22 @@ void calCurrentTime(){
     if(hh==24){
         day+=1;
         hh=0;
+        alreadyTriggered=false;
     }
 }
-// print current time
+
 void printCurrentTime(){
     Serial.println(String(hh)+":"+mm+":"+ss+":"+week[day]);
 }
 
-void setup() {
-    pinMode(LED_BUILTIN,OUTPUT);//LOW->ON HIGH->OFF GPIO-1
-    pinMode(14,OUTPUT);//small led
-    pinMode(13,OUTPUT);//triggering relay IN4
-    digitalWrite(13,HIGH);
-    delay(5000);//avoiding serial output missing
-    Serial.begin(9600);//baud rate
-    // ===Connect to Wifi=====================
+void connectToWifi(){
     WiFi.begin(ssid,pswd);
     Serial.println(String("Connecting to Wifi ")+String(ssid));
     while(WiFi.status()!=WL_CONNECTED){
         Serial.print(".");
-        digitalWrite(LED_BUILTIN,LOW);
-        delay(500);
         digitalWrite(LED_BUILTIN,HIGH);
+        delay(500);
+        digitalWrite(LED_BUILTIN,LOW);
         delay(500);
     }
     Serial.println(" connected to "+String(ssid));
@@ -58,12 +58,10 @@ void setup() {
     Serial.println(WiFi.localIP());
     // Serial.print("local port\t");
     // Serial.println(UDP.localPort());
-    //===turnON wifi indicator=====
-    if(WiFi.status()==WL_CONNECTED){
-        digitalWrite(LED_BUILTIN,LOW);
-    }
     //===getting UTC+5:30 form ntp=====
-    timeClient.begin();
+    syncTime();
+}
+void syncTime(){
     timeClient.update();
     Serial.print("local time\t");
     Serial.println(week[timeClient.getDay()]+" "+timeClient.getFormattedTime());
@@ -72,18 +70,47 @@ void setup() {
     mm=timeClient.getMinutes();
     ss=timeClient.getSeconds();
     day=timeClient.getDay();
-    //===connect to Arduino Cloud=====
-    // initProperties();//not doing may be need to go deep down
+}
+
+void wakeMyPC(){
+    for(int i=0;i<3;++i){
+        WOL.sendMagicPacket(MACAddress);//to port 9
+        Serial.println("sent wakeup signal");
+    }
+}
+
+void setup() {
+    pinMode(LED_BUILTIN,OUTPUT);//LOW->ON HIGH->OFF GPIO-1
+    pinMode(14,OUTPUT);//small led
+    pinMode(13,OUTPUT);//triggering relay IN4
+    digitalWrite(13,HIGH);
+    Serial.begin(115200);//baud rate 
+    delay(2000);//avoiding serial output missing
+    connectToWifi();
+    
+    
 }
 
 void loop() {
-    digitalWrite(14,HIGH);
-    calCurrentTime();
-    if(hh==0 && mm==8){
-        printCurrentTime();
-        digitalWrite(13,LOW);
-    }
     delay(500);
     digitalWrite(14,LOW);
+    ss+=1;
     delay(500);
+    digitalWrite(14,HIGH);
+    if(ss==60){
+        calCurrentTime();
+        Serial.println("ss update");
+    }
+    if(hh==3 && mm==0 && alreadyTriggered==false){
+        printCurrentTime();
+        digitalWrite(13,LOW);
+        wakeMyPC();
+        alreadyTriggered=true;
+    }
+    //===turnON wifi indicator=====
+    if(WiFi.status()!=WL_CONNECTED){
+        Serial.println("-Disconnected-");
+        connectToWifi();
+    }
+    printCurrentTime();
 }
